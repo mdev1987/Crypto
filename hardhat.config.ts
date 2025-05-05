@@ -8,10 +8,10 @@ const config: HardhatUserConfig = {
   networks: {
     localhost: {
       url: "http://localhost:8545",
-      //accounts: [],
+      //accounts: [""],
     },
     polygon: {
-      url: "https://rpc.ankr.com/polygon",
+      url: "https://rpc.ankr.com/polygon/a08dc0c8056dd0b5773c7bc41d752dcd0a03224d6424c0142c8e6a35b1c53c85",
       //accounts: ["YOUR_PRIVATE_KEY"],
     },
   },

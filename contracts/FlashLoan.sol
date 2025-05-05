@@ -47,9 +47,11 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         FlashParams memory params
     ) external nonReentrant checkParams(params) onlyOwner {
         bytes memory data = abi.encode(
-            params.flashLoanPool,
-            params.loanAmount,
-            params.routes
+            FlashParams({
+                flashLoanPool: params.flashLoanPool,
+                loanAmount: params.loanAmount,
+                routes: params.routes
+            })
         );
 
         address loanToken = RouteUtils.getInitialToken(params.routes[0]);
@@ -149,6 +151,7 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
             IERC20(loanToken).balanceOf(address(this)) >= decoded.loanAmount,
             "Not enough amount to return the loan"
         );
+
         IERC20(loanToken).transfer(decoded.flashLoanPool, decoded.loanAmount);
         emit LoanRepaid(decoded.flashLoanPool, decoded.loanAmount);
 

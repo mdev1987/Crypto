@@ -16,18 +16,27 @@ import { FlashLoanParams } from "../types";
  *
  * @returns A promise that resolves to the transaction object of the executed flash loan.
  */
-export async function executeFlashloan(params: FlashLoanParams) {
+export async function executeFlashLoan(params: FlashLoanParams) {
   const flashLoan = new ethers.Contract(
     params.flashLoanContractAddress,
     flashloanJson.abi,
     params.signer
   );
-  const tx = await flashLoan.executeFlashloan({
-    flashLoanPool: params.flashLoanPool,
-    amountIn: params.loanAmount,
-    routes: params.hops,
-    gasLimit: params.gasLimit,
-    gasPrice: params.gasPrice,
-  });
+  const tx = await flashLoan.executeFlashLoan(
+    {
+      flashLoanPool: params.flashLoanPool,
+      loanAmount: params.loanAmount,
+      routes: [
+        {
+          hops: params.hops,
+          part: 10000,
+        },
+      ],
+    },
+    {
+      gasLimit: params.gasLimit,
+      gasPrice: params.gasPrice,
+    }
+  );
   return tx;
 }

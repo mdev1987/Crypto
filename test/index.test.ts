@@ -4,25 +4,26 @@ import { dodoV2Pool, Protocols } from "../constants";
 import { findRouterByProtocol } from "../utils/findRouterByProtocol";
 import { FlashLoanParams } from "../types";
 import { ERC20Token } from "../constants/tokens";
-import { executeFlashloan } from "../scripts/executeFlashloan";
+import { executeFlashLoan } from "../scripts/executeFlashloan";
 
 describe("DODO FlashLoan", () => {
   it("Execute flash loan", async () => {
-    //const providerUrl = "http://localhost:8545/";
-    const privateKey = process.env.PRIVATE_KEY || "";
-    const wallet = new ethers.Wallet(privateKey);
+    const providerUrl = "http://localhost:8545";
+    //const privateKey = process.env.PRIVATE_KEY || "";
+    //const wallet = new ethers.Wallet(privateKey);
+    const provider = new ethers.JsonRpcProvider(providerUrl);
+    const wallet = await provider.getSigner(0);
     const flashLoan = await deployDodoFlashloan({ wallet });
     const params: FlashLoanParams = {
       flashLoanContractAddress: flashLoan.target.toString(),
       flashLoanPool: dodoV2Pool.WETH_ULT,
-      loanAmount: ethers.parseEther("0.1"),
-      // loanAmountDecimals: 18,
+      loanAmount: ethers.parseEther("0.01"),
       hops: [
         {
-          protocol: Protocols.UNISWAP_V2,
+          protocol: Protocols.QUICKSWAP,
           data: ethers.AbiCoder.defaultAbiCoder().encode(
             ["address"],
-            [findRouterByProtocol(Protocols.UNISWAP_V2)]
+            [findRouterByProtocol(Protocols.QUICKSWAP)]
           ),
           path: [ERC20Token.WETH?.address, ERC20Token.USDC?.address],
           amountOutMinV3: 0,
@@ -44,7 +45,7 @@ describe("DODO FlashLoan", () => {
       signer: wallet,
     };
 
-    const tx = await executeFlashloan(params);
-    await tx.wait();
+    const tx = await executeFlashLoan(params);
+    console.log(tx);
   });
 });
