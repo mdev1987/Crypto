@@ -35,8 +35,8 @@ contract Withdraw is Ownable, ReentrancyGuard {
         require(
             token.balanceOf(address(this)) >= _value,
             "Insufficient balance"
-        );
-        SafeERC20.safeTransfer(token, _to, _value);
-        emit Withdrawn(_to, _value);
+        ); // Check
+        SafeERC20.safeTransfer(token, _to, _value); // Transfer
+        emit Withdrawn(_to, _value); // Emit the Withdrawn event
     }
 }

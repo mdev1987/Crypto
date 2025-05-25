@@ -20,8 +20,10 @@
   "devDependencies": {
     "@typechain/ethers-v6": "^0.5.1",
     "@typechain/hardhat": "^9.1.0",
+    "@types/chai": "^5.2.2",
     "@types/lru-cache": "^7.10.9",
     "@types/node": "^22.15.3",
+    "chai": "^5.2.0",
     "typechain": "^8.3.2"
   }
 }

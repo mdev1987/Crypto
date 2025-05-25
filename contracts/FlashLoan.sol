@@ -5,6 +5,7 @@ import {IFlashloan} from "./interfaces/IFlashloan.sol";
 import {DodoBase} from "./base/DodoBase.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
+import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
 import {Withdraw} from "./base/Withdraw.sol";
 import {RouteUtils} from "./libraries/RouteUtils.sol";
 import {IDODO} from "./interfaces/IDODO.sol";
@@ -24,8 +25,9 @@ import {IDODOProxy} from "./interfaces/IDODOProxy.sol";
  * @dev Inherits from multiple base contracts for flash loan validation, withdrawal, and DODO base functionality
  */
 contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
-    using Math for uint256;
+    using SignedMath for uint256;
     using SafeERC20 for IERC20;
+
     event SentProfit(address indexed receiption, uint256 profit);
     event SwapFinished(address token, uint256 amount);
     event LoanRepaid(address indexed pool, uint256 amount);
@@ -88,7 +90,7 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
      */
     function ApproveToken(
         address token,
-        address spender,
+        address spender, // spender or to
         uint256 amount
     ) internal onlyOwner {
         require(IERC20(token).approve(spender, amount), "Approval failed");
@@ -126,23 +128,23 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         address loanToken = RouteUtils.getInitialToken(decoded.routes[0]);
         require(
             IERC20(loanToken).balanceOf(address(this)) >= decoded.loanAmount,
-            "Insufficient balance after borrowing"
+            "Failed to borrow loan token"
         );
         console.log(
-            "Balance Before Borrowing: ",
+            "Balance After Borrowing: ",
             IERC20(loanToken).balanceOf(address(this))
         );
 
         // Execute the logic for routing the loan through different swaps
         routeLoop(decoded.routes, decoded.loanAmount);
 
-        console.log(
-            "Loan Token balance after borrowing and swap: ",
+        emit SwapFinished(
+            loanToken,
             IERC20(loanToken).balanceOf(address(this))
         );
 
-        emit SwapFinished(
-            loanToken,
+        console.log(
+            "Balance After Borrowing and Swapping: ",
             IERC20(loanToken).balanceOf(address(this))
         );
 
@@ -162,7 +164,6 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         );
         uint256 remaindedBalance = IERC20(loanToken).balanceOf(address(this));
         IERC20(loanToken).transfer(owner(), remaindedBalance);
-
         emit SentProfit(owner(), remaindedBalance);
     }
 
@@ -191,6 +192,14 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
 
     function hopLoop(Route memory route, uint256 totalAmount) internal {
         uint256 amountIn = totalAmount;
+
+        /**
+         * @dev Iterates through the hops in a route, executing each hop by calling pickProtocol
+         *      and updating the input amount for the next hop based on the previous hop's output.
+         * @param route The route containing an array of hops to be processed
+         * @param amountIn The initial input amount for the first hop
+         * @return The final output amount after processing all hops in the route
+         */
         for (uint256 i = 0; i < route.hops.length; i++) {
             amountIn = pickProtocol(route.hops[i], amountIn);
         }
@@ -201,6 +210,7 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         uint256 amountIn
     ) internal returns (uint256 amountOut) {
         if (hop.protocol == 0) {
+            // for protocol 0 using UniswapV3
             amountOut = uniSwapV3(hop.data, amountIn, hop.path);
             console.log(
                 "Amount Out: ",
@@ -208,9 +218,9 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
                 " for protocol: ",
                 hop.protocol
             );
-        } else if (hop.protocol > 8) {
+        } else if (hop.protocol < 8) {
+            // for protocols 1-7
             // UniswapV2 forked: QuickSwap, Sushiswap, PancakeSwap, etc.
-            // Add logic for another protocol here
             amountOut = uniSwapV2(hop.data, amountIn, hop.path);
             console.log(
                 "Amount Out: ",
@@ -219,6 +229,8 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
                 hop.protocol
             );
         } else {
+            // for other protocols(protocol >= 8)
+            // execute a swap on Dodo V2
             amountOut = dodoV2Swap(hop.data, amountIn, hop.path);
             console.log(
                 "Amount Out: ",
@@ -229,6 +241,18 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         }
     }
 
+    /**
+     * @dev Performs a token swap on Uniswap V3
+     * @param data Encoded router address and fee tier for the swap
+     * @param amountIn Amount of input tokens to swap
+     * @param path Array of token addresses representing the swap path
+     * @return amountOut Amount of output tokens received from the swap
+     * @notice This function:
+     * 1. Decodes the router address and fee tier from input data
+     * 2. Approves the router to spend input tokens
+     * 3. Executes a single-hop swap with no minimum output or price limit
+     * 4. Returns amount of output tokens
+     */
     function uniSwapV3(
         bytes memory data,
         uint256 amountIn,
@@ -246,7 +270,7 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
                 tokenOut: path[1],
                 fee: fee,
                 recipient: address(this),
-                deadline: block.timestamp,
+                deadline: block.timestamp + 60, // 1 minute deadline
                 amountIn: amountIn,
                 amountOutMinimum: 0,
                 sqrtPriceLimitX96: 0
@@ -297,13 +321,14 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         uint256 amountIn,
         address[] memory path
     ) internal returns (uint256 amountOut) {
+        // Decode the Dodo V2 pool address, approve address, and proxy address from the data
         (address dodoV2Pool, address dodoApprove, address dodoProxy) = abi
             .decode(data, (address, address, address));
         address[] memory dodoPairs = new address[](1);
         dodoPairs[0] = dodoV2Pool;
         uint256 directions = IDODO(dodoV2Pool)._BASE_TOKEN_() == path[0]
-            ? 1
-            : 0; // 0 for base to quote, 1 for quote to base
+            ? 0 // 0 for base token to quote token (base token is the main token that we are swapping)
+            : 1; // 1 for quote token to base token (quote token is the token that we are swapping to)
         // Approve the Dodo router to spend the token
         ApproveToken(path[0], dodoApprove, amountIn);
         // Perform the swap
@@ -311,10 +336,10 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
             path[0],
             path[1],
             amountIn,
-            1,
-            dodoPairs,
+            1, // 1 is the minimum amount out
+            dodoPairs, // Dodo pairs
             directions,
-            false,
+            false, // no incentive mode (incentive mode is used for incentivizing liquidity providers)
             block.timestamp + 60 // 1 minute deadline
         );
     }

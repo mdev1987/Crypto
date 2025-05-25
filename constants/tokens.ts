@@ -2,12 +2,12 @@ import { erc20Token } from "../types";
 
 export const ERC20Token: erc20Token = {
   MATIC: {
-    symbol: "MATIC",
-    name: "MATIC",
+    symbol: "POL", // ex MATIC
+    name: "POL",
     decimals: 18,
-    address: "0xeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+    address: "0x455e53cbb86018ac2b8092fdcd39d8444affc3f6",
     logoURI:
-      "https://tokens.1inch.io/0x7d1afa7b718fb893db30a3abc0cfc608aacfebb0.png",
+      "https://tokens.1inch.io/0x455e53cbb86018ac2b8092fdcd39d8444affc3f6.png",
   },
   USDC: {
     symbol: "USDC",
@@ -77,7 +77,7 @@ export const ERC20Token: erc20Token = {
     symbol: "WETH",
     name: "Wrapped Ether",
     decimals: 18,
-    address: "0x7ceb23fd6bc0add59e62ac25578270cff1b9f619",
+    address: "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619",
     logoURI:
       "https://tokens.1inch.io/0x7ceb23fd6bc0add59e62ac25578270cff1b9f619.png",
   },

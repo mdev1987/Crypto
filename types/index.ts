@@ -1,4 +1,5 @@
 import { JsonRpcProvider, ethers } from "ethers";
+import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
 import { ERC20 } from "../typechain-types";
 
 export type FlashLoanParams = {
@@ -32,9 +33,8 @@ export type Protocol = {
 };
 
 export type DeployDODOFlashloanParams = {
-  wallet: ethers.Wallet | ethers.JsonRpcSigner;
+  wallet: ethers.Wallet | HardhatEthersSigner;
 };
-
 export type IToken = {
   symbol: string;
   name: string;

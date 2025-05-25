@@ -6,6 +6,12 @@ const config: HardhatUserConfig = {
     compilers: [{ version: "0.8.22" }, { version: "0.8.8" }],
   },
   networks: {
+    hardhat: {
+      chainId: 31337,
+      forking: {
+        url: "https://rpc.ankr.com/polygon/a08dc0c8056dd0b5773c7bc41d752dcd0a03224d6424c0142c8e6a35b1c53c85",
+      },
+    },
     localhost: {
       url: "http://localhost:8545",
       //accounts: [""],

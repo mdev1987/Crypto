@@ -7,15 +7,15 @@ import {IFlashloan} from "../interfaces/IFlashloan.sol";
 abstract contract FlashloanValidation {
     uint256 constant MAX_PROTOCOL = 8;
 
-    /// @dev Validates that the total route parts sum exactly to 10000 (100%)
-    /// @notice Ensures route distribution is precisely allocated across protocols
-    /// @param route An array of Route structs representing protocol distribution
-    modifier checkTotalRoutePart(IFlashloan.Route[] memory route) {
+    /// @dev Validates that the total routes parts sum exactly to 10000 (100%)
+    /// @notice Ensures routes distribution is precisely allocated across protocols
+    /// @param routes An array of Route structs representing protocol distribution
+    modifier checkTotalRoutePart(IFlashloan.Route[] memory routes) {
         uint16 totalPart = 0;
-        for (uint256 i = 0; i < route.length; i++) {
-            totalPart += route[i].part;
+        for (uint256 i = 0; i < routes.length; i++) {
+            totalPart += routes[i].part;
         }
         require(totalPart == 10000, "Total part must be 10000");
-        _;
+        _; // Continue with the function execution
     }
 }

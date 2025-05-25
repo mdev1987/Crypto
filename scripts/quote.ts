@@ -13,8 +13,8 @@ const provider = new ethers.JsonRpcProvider(
 const tokenIn = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH on Ethereum
 const tokenOut = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // USDT on Ethereum
 const fee = 3000; // 0.3% fee tier
-const amountIn = ethers.parseUnits("1", 18);
-const sqrtPriceLimitX96 = ethers.parseUnits("0", 18); // 0 USDT per WETH
+const amountIn = ethers.parseEther("1");
+const sqrtPriceLimitX96 = ethers.toBigInt(0); // 0 USDT per WETH
 
 /**
  * Creates a contract instance for the Uniswap V3 Quoter V1 contract.
@@ -75,7 +75,6 @@ const main = async () => {
     quote2.sqrtPriceX96After.toString()
   );
   console.log("Quote 2 gasEstimate:", quote2.gasEstimate.toString());
-  console.log("Quote 1 gasEstimate:", quote1.gasEstimate.toString());
 };
 main()
   /**
