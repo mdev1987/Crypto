@@ -67,6 +67,14 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         uint256 baseAmount = baseToken == loanToken ? params.loanAmount : 0;
         uint256 quoteAmount = baseToken == loanToken ? 0 : params.loanAmount;
 
+        /**
+         * @notice Initiates a flash loan from a DODO pool with specified base and quote amounts
+         * @param baseAmount The amount of base token to borrow
+         * @param quoteAmount The amount of quote token to borrow
+         * @param address The recipient address for the flash loan
+         * @param data Encoded callback data for post-loan processing
+         * @dev Calls the DODO pool's flashLoan method to execute the loan
+         */
         IDODO(params.flashLoanPool).flashLoan(
             baseAmount,
             quoteAmount,
@@ -165,6 +173,10 @@ contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
         uint256 remaindedBalance = IERC20(loanToken).balanceOf(address(this));
         IERC20(loanToken).transfer(owner(), remaindedBalance);
         emit SentProfit(owner(), remaindedBalance);
+        console.log(
+            "Loan Token Balance After Repay And Transfer To Owner: ",
+            IERC20(loanToken).balanceOf(address(this))
+        );
     }
 
     /**
