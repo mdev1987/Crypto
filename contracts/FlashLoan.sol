@@ -1,358 +1,224 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.8;
 
-import {IFlashloan} from "./interfaces/IFlashloan.sol";
+import {IFlashloan, FlashParams} from "./interfaces/IFlashloan.sol";
 import {DodoBase} from "./base/DodoBase.sol";
+import {Withdraw} from "./base/Withdraw.sol";
+import {FlashloanValidation} from "./base/FlashloanValidation.sol";
+import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
+import {SafeERC20, IERC20 as SafeIERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {SignedMath} from "@openzeppelin/contracts/utils/math/SignedMath.sol";
-import {Withdraw} from "./base/Withdraw.sol";
-import {RouteUtils} from "./libraries/RouteUtils.sol";
-import {IDODO} from "./interfaces/IDODO.sol";
+import {RouteUtils, Route, Hop} from "./libraries/RouteUtils.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {FlashloanValidation} from "./base/FlashloanValidation.sol";
-import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import {IDODO} from "./interfaces/IDODO.sol";
 import {Part} from "./libraries/Part.sol";
-import "hardhat/console.sol";
 import {ISwapRouter} from "./uniswap/V3/ISwapRouter.sol";
 import {IUniswapV2Router} from "./uniswap/IUniswapV2Router.sol";
 import {IDODOProxy} from "./interfaces/IDODOProxy.sol";
 
 /**
- * @title FlashLoan Contract
- * @notice Implements a multi-protocol flash loan execution and routing mechanism
- * @dev Supports swaps across Uniswap V2, Uniswap V3, and Dodo V2 protocols
- * @dev Inherits from multiple base contracts for flash loan validation, withdrawal, and DODO base functionality
+ * @title FlashLoan Executor
+ * @notice Executes multi-protocol flash loans via DODO pools with route-based swaps
  */
-contract FlashLoan is IFlashloan, DodoBase, Withdraw, FlashloanValidation {
-    using SignedMath for uint256;
-    using SafeERC20 for IERC20;
+contract FlashLoan is DodoBase, FlashloanValidation, Withdraw, ReentrancyGuard {
+    using SafeERC20 for SafeIERC20;
 
-    event SentProfit(address indexed receiption, uint256 profit);
-    event SwapFinished(address token, uint256 amount);
+    /// @notice Emitted after all swaps are executed
+    event SwapsExecuted(address indexed token, uint256 balanceAfter);
+    /// @notice Emitted when the loan is repaid
     event LoanRepaid(address indexed pool, uint256 amount);
-    event TokenApproved(
+    /// @notice Emitted when profit is sent to the owner
+    event ProfitSent(address indexed recipient, uint256 amount);
+    /// @notice Emitted when tokens are approved
+    event Approval(
         address indexed token,
         address indexed spender,
         uint256 amount
     );
 
-    /**
-     * @notice Executes a flash loan from a specified DODO pool
-     * @dev Initiates a flash loan with configurable routes and loan parameters
-     * @param params Flash loan parameters including pool, amount, and routing information
-     * @dev Requires the caller to be the contract owner and passes parameter validation
-     * @dev Supports flash loans with base and quote token configurations
-     * @dev Logs token balances before and after borrowing for debugging purposes
-     */
+    constructor() Ownable() {}
+
+    uint256 private constant MAX_UINT = type(uint256).max;
+    uint256 private constant SLIPPAGE_NUM = 95;
+    uint256 private constant SLIPPAGE_DEN = 100;
+    uint256 private constant DEADLINE_DELAY = 60;
+
+    /// @inheritdoc IFlashloan
     function executeFlashLoan(
-        FlashParams memory params
-    ) external nonReentrant checkParams(params) onlyOwner {
-        bytes memory data = abi.encode(
-            FlashParams({
-                flashLoanPool: params.flashLoanPool,
-                loanAmount: params.loanAmount,
-                routes: params.routes
-            })
-        );
+        FlashParams calldata params
+    ) external onlyOwner nonReentrant checkParams(params) {
+        bytes memory data = abi.encode(params);
 
         address loanToken = RouteUtils.getInitialToken(params.routes[0]);
-        console.log(
-            "Balance Before Borrowing: ",
-            IERC20(loanToken).balanceOf(address(this))
-        );
-
         address baseToken = IDODO(params.flashLoanPool)._BASE_TOKEN_();
-        console.log("Base Token: ", baseToken);
-        uint256 baseAmount = baseToken == loanToken ? params.loanAmount : 0;
-        uint256 quoteAmount = baseToken == loanToken ? 0 : params.loanAmount;
+        uint256 baseAmt = (baseToken == loanToken) ? params.loanAmount : 0;
+        uint256 quoteAmt = (baseToken == loanToken) ? 0 : params.loanAmount;
 
-        /**
-         * @notice Initiates a flash loan from a DODO pool with specified base and quote amounts
-         * @param baseAmount The amount of base token to borrow
-         * @param quoteAmount The amount of quote token to borrow
-         * @param address The recipient address for the flash loan
-         * @param data Encoded callback data for post-loan processing
-         * @dev Calls the DODO pool's flashLoan method to execute the loan
-         */
         IDODO(params.flashLoanPool).flashLoan(
-            baseAmount,
-            quoteAmount,
+            baseAmt,
+            quoteAmt,
             address(this),
             data
         );
-        console.log(
-            "Balance After Borrowing: ",
-            IERC20(loanToken).balanceOf(address(this))
-        );
     }
 
-    /**
-     * @notice Approves a token for spending by a specific spender
-     * @dev Internal function that can only be called by the contract owner
-     * @param token The address of the token to be approved
-     * @param spender The address allowed to spend the tokens
-     * @param amount The amount of tokens to approve for spending
-     * @dev Requires successful token approval, otherwise reverts with an error message
-     * @dev Emits a TokenApproved event upon successful approval
-     */
-    function ApproveToken(
-        address token,
-        address spender, // spender or to
-        uint256 amount
-    ) internal onlyOwner {
-        require(IERC20(token).approve(spender, amount), "Approval failed");
-        emit TokenApproved(token, spender, amount);
-    }
-
-    /**
-     * @dev Callback function for handling flash loan logic after borrowing
-     * @param data Encoded flash loan parameters
-     *
-     * This internal function is called after receiving a flash loan and performs the following steps:
-     * 1. Decodes the flash loan parameters
-     * 2. Validates the loan token balance
-     * 3. Executes routing through different swap protocols
-     * 4. Repays the original loan amount
-     * 5. Transfers any remaining profit to the contract owner
-     *
-     * Emits:
-     * - SwapFinished when swap operations are completed
-     * - LoanRepaid when the loan is repaid to the flash loan pool
-     * - SentProfit when remaining balance is transferred to the owner
-     *
-     * Requirements:
-     * - Must have sufficient balance to repay the loan
-     * - Loan token balance must meet minimum requirements
-     */
+    /// @inheritdoc DodoBase
     function _flashLoanCallBack(
         address,
         uint256,
         uint256,
         bytes calldata data
     ) internal override {
-        FlashParams memory decoded = abi.decode(data, (FlashParams));
+        FlashParams memory cfg = abi.decode(data, (FlashParams));
+        address pool = cfg.flashLoanPool;
+        address loanToken = RouteUtils.getInitialToken(cfg.routes[0]);
+        uint256 owed = cfg.loanAmount;
 
-        address loanToken = RouteUtils.getInitialToken(decoded.routes[0]);
-        require(
-            IERC20(loanToken).balanceOf(address(this)) >= decoded.loanAmount,
-            "Failed to borrow loan token"
-        );
-        console.log(
-            "Balance After Borrowing: ",
-            IERC20(loanToken).balanceOf(address(this))
-        );
+        if (msg.sender != pool) revert Unauthorized();
+        if (IERC20(loanToken).balanceOf(address(this)) < owed)
+            revert InsufficientBalance();
 
-        // Execute the logic for routing the loan through different swaps
-        routeLoop(decoded.routes, decoded.loanAmount);
-
-        emit SwapFinished(
+        _executeRoutes(cfg.routes, owed);
+        emit SwapsExecuted(
             loanToken,
             IERC20(loanToken).balanceOf(address(this))
         );
 
-        console.log(
-            "Balance After Borrowing and Swapping: ",
-            IERC20(loanToken).balanceOf(address(this))
-        );
+        SafeIERC20(loanToken).safeTransfer(pool, owed);
+        emit LoanRepaid(pool, owed);
 
-        // Repay the loan back to the flash loan pool
-        require(
-            IERC20(loanToken).balanceOf(address(this)) >= decoded.loanAmount,
-            "Not enough amount to return the loan"
-        );
-
-        IERC20(loanToken).transfer(decoded.flashLoanPool, decoded.loanAmount);
-        emit LoanRepaid(decoded.flashLoanPool, decoded.loanAmount);
-
-        // Transfer the profit
-        console.log(
-            "Loan Token Balance After Repaying: ",
-            IERC20(loanToken).balanceOf(address(this))
-        );
-        uint256 remaindedBalance = IERC20(loanToken).balanceOf(address(this));
-        IERC20(loanToken).transfer(owner(), remaindedBalance);
-        emit SentProfit(owner(), remaindedBalance);
-        console.log(
-            "Loan Token Balance After Repay And Transfer To Owner: ",
-            IERC20(loanToken).balanceOf(address(this))
-        );
+        uint256 profit = IERC20(loanToken).balanceOf(address(this));
+        if (profit > 0) {
+            SafeIERC20(loanToken).safeTransfer(owner(), profit);
+            emit ProfitSent(owner(), profit);
+        }
     }
 
-    /**
-     * @dev Executes a loop over an array of routes and processes each route by calculating the
-     *      corresponding amount and invoking the hopLoop function.
-     * @param routes An array of Route structs representing the paths for the operation.
-     * @param totalAmount The total amount to be distributed across the routes.
-     *
-     * Requirements:
-     * - The `routes` array must satisfy the `checkTotalRoutePart` modifier condition.
-     *
-     * Emits:
-     * - Logs the total loan token amount for each swap iteration.
-     */
-    function routeLoop(
+    /// @dev Approve spender for maximum allowance
+    function _approveMax(address token, address spender) internal onlyOwner {
+        SafeIERC20(token).safeApprove(spender, MAX_UINT);
+        emit Approval(token, spender, MAX_UINT);
+    }
+
+    /// @dev Loop through all routes; ensure weights sum to 1e18
+    function _executeRoutes(
         Route[] memory routes,
-        uint256 totalAmount
+        uint256 total
     ) internal checkTotalRoutePart(routes) {
-        for (uint256 i = 0; i < routes.length; i++) {
-            uint256 amountIn = Part.partToAmountIn(routes[i].part, totalAmount);
-            console.log("Loan Token Amount for swap: ", totalAmount);
-            hopLoop(routes[i], amountIn);
+        uint256 len = routes.length;
+        for (uint256 i = 0; i < len; ) {
+            uint256 slice = Part.partToAmountIn(routes[i].part, total);
+            _executeHops(routes[i], slice);
+            unchecked {
+                ++i;
+            }
         }
     }
 
-    function hopLoop(Route memory route, uint256 totalAmount) internal {
-        uint256 amountIn = totalAmount;
-
-        /**
-         * @dev Iterates through the hops in a route, executing each hop by calling pickProtocol
-         *      and updating the input amount for the next hop based on the previous hop's output.
-         * @param route The route containing an array of hops to be processed
-         * @param amountIn The initial input amount for the first hop
-         * @return The final output amount after processing all hops in the route
-         */
-        for (uint256 i = 0; i < route.hops.length; i++) {
-            amountIn = pickProtocol(route.hops[i], amountIn);
+    /// @dev Execute hops within a single route
+    function _executeHops(Route memory route, uint256 amountIn) internal {
+        uint256 hopsLen = route.hops.length;
+        uint256 amt = amountIn;
+        for (uint256 i = 0; i < hopsLen; ) {
+            amt = _dispatchSwap(route.hops[i], amt);
+            unchecked {
+                ++i;
+            }
         }
     }
 
-    function pickProtocol(
+    /// @dev Dispatch swap to the correct protocol
+    function _dispatchSwap(
         Hop memory hop,
         uint256 amountIn
-    ) internal returns (uint256 amountOut) {
+    ) internal returns (uint256) {
         if (hop.protocol == 0) {
-            // for protocol 0 using UniswapV3
-            amountOut = uniSwapV3(hop.data, amountIn, hop.path);
-            console.log(
-                "Amount Out: ",
-                amountOut,
-                " for protocol: ",
-                hop.protocol
-            );
+            return _swapV3(hop.data, amountIn, hop.path);
         } else if (hop.protocol < 8) {
-            // for protocols 1-7
-            // UniswapV2 forked: QuickSwap, Sushiswap, PancakeSwap, etc.
-            amountOut = uniSwapV2(hop.data, amountIn, hop.path);
-            console.log(
-                "Amount Out: ",
-                amountOut,
-                " for protocol: ",
-                hop.protocol
-            );
+            return _swapV2(hop.data, amountIn, hop.path);
         } else {
-            // for other protocols(protocol >= 8)
-            // execute a swap on Dodo V2
-            amountOut = dodoV2Swap(hop.data, amountIn, hop.path);
-            console.log(
-                "Amount Out: ",
-                amountOut,
-                " for protocol: ",
-                hop.protocol
-            );
+            return _swapDodoV2(hop.data, amountIn, hop.path);
         }
     }
 
-    /**
-     * @dev Performs a token swap on Uniswap V3
-     * @param data Encoded router address and fee tier for the swap
-     * @param amountIn Amount of input tokens to swap
-     * @param path Array of token addresses representing the swap path
-     * @return amountOut Amount of output tokens received from the swap
-     * @notice This function:
-     * 1. Decodes the router address and fee tier from input data
-     * 2. Approves the router to spend input tokens
-     * 3. Executes a single-hop swap with no minimum output or price limit
-     * 4. Returns amount of output tokens
-     */
-    function uniSwapV3(
+    /// @dev Uniswap V3 single-hop exactInputSingle
+    function _swapV3(
         bytes memory data,
         uint256 amountIn,
         address[] memory path
     ) internal returns (uint256 amountOut) {
         (address router, uint24 fee) = abi.decode(data, (address, uint24));
-        ISwapRouter swapRouter = ISwapRouter(router);
-
-        // Approve the router to spend the token
-        ApproveToken(path[0], address(swapRouter), amountIn);
-
-        amountOut = swapRouter.exactInputSingle(
-            ISwapRouter.ExactInputSingleParams({
-                tokenIn: path[0],
-                tokenOut: path[1],
-                fee: fee,
-                recipient: address(this),
-                deadline: block.timestamp + 60, // 1 minute deadline
-                amountIn: amountIn,
-                amountOutMinimum: 0,
-                sqrtPriceLimitX96: 0
-            })
+        ISwapRouter(router).exactInputSingle(
+            ISwapRouter.ExactInputSingleParams(
+                path[0],
+                path[1],
+                fee,
+                address(this),
+                block.timestamp + DEADLINE_DELAY,
+                amountIn,
+                0,
+                0
+            )
         );
+        _approveMax(path[0], router);
     }
 
-    /**
-     * @dev Performs a token swap on Uniswap V2
-     * @param data Encoded router address to use for the swap
-     * @param amountIn Amount of input tokens to swap
-     * @param path Array of token addresses representing the swap path
-     * @return amountOut Amount of output tokens received from the swap
-     * @notice This function:
-     * 1. Decodes the router address from input data
-     * 2. Approves the router to spend input tokens
-     * 3. Executes swap with 1 minute deadline
-     * 4. Returns amount of output tokens (second element in returned array)
-     */
-    function uniSwapV2(
+    /// @dev Uniswap V2 forked swap
+    function _swapV2(
         bytes memory data,
         uint256 amountIn,
         address[] memory path
     ) internal returns (uint256 amountOut) {
         address router = abi.decode(data, (address));
-        // Approve the router to spend the token
-        ApproveToken(path[0], router, amountIn);
-        // Perform the swap
-        uint256 amountOutMin = Math.mulDiv(amountIn, 95, 100); // 5% slippage
-        amountOut = IUniswapV2Router(router).swapExactTokensForTokens(
-            amountIn,
-            amountOutMin,
-            path,
-            address(this),
-            block.timestamp + 60 // 1 minute deadline
-        )[1]; // Amount out is the second element in the returned array
+        _approveMax(path[0], router);
+        uint256 minOut = Math.mulDiv(amountIn, SLIPPAGE_NUM, SLIPPAGE_DEN);
+        uint256[] memory outs = IUniswapV2Router(router)
+            .swapExactTokensForTokens(
+                amountIn,
+                minOut,
+                path,
+                address(this),
+                block.timestamp + DEADLINE_DELAY
+            );
+        amountOut = outs[outs.length - 1];
     }
 
-    /**
-     * @dev Executes a swap on the Dodo V2 protocol.
-     * @param data The encoded parameters for the swap.
-     * @param amountIn The amount of input tokens to be swapped.
-     * @param path The path of tokens for the swap.
-     * @return amountOut The amount of output tokens received from the swap.
-     */
-    function dodoV2Swap(
+    /// @dev DODO V2 token-to-token swap via proxy
+    function _swapDodoV2(
         bytes memory data,
         uint256 amountIn,
         address[] memory path
     ) internal returns (uint256 amountOut) {
-        // Decode the Dodo V2 pool address, approve address, and proxy address from the data
-        (address dodoV2Pool, address dodoApprove, address dodoProxy) = abi
-            .decode(data, (address, address, address));
-        address[] memory dodoPairs = new address[](1);
-        dodoPairs[0] = dodoV2Pool;
-        uint256 directions = IDODO(dodoV2Pool)._BASE_TOKEN_() == path[0]
-            ? 0 // 0 for base token to quote token (base token is the main token that we are swapping)
-            : 1; // 1 for quote token to base token (quote token is the token that we are swapping to)
-        // Approve the Dodo router to spend the token
-        ApproveToken(path[0], dodoApprove, amountIn);
-        // Perform the swap
-        amountOut = IDODOProxy(dodoProxy).dodoSwapV2TokenToToken(
+        // decode the pool address and proxy
+        (address pool, , address proxy) = abi.decode(
+            data,
+            (address, address, address)
+        );
+
+        // approve the proxy
+        _approveMax(path[0], proxy);
+
+        // fixed-size memory array literal
+        address[1] memory pools = [pool];
+
+        // direction: 0 = base→quote, 1 = quote→base
+        uint256 direction = IDODO(pool)._BASE_TOKEN_() == path[0] ? 0 : 1;
+
+        // execute the swap
+        amountOut = IDODOProxy(proxy).dodoSwapV2TokenToToken(
             path[0],
             path[1],
             amountIn,
-            1, // 1 is the minimum amount out
-            dodoPairs, // Dodo pairs
-            directions,
-            false, // no incentive mode (incentive mode is used for incentivizing liquidity providers)
-            block.timestamp + 60 // 1 minute deadline
+            1,
+            pools, // pass in the [pool] array
+            direction,
+            false,
+            block.timestamp + DEADLINE_DELAY
         );
     }
+
+    // Custom errors for gas savings
+    error Unauthorized();
+    error InsufficientBalance();
 }

@@ -1,42 +1,22 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.8;
-import "@openzeppelin/contracts/access/Ownable.sol";
-import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
-/**
- * @title Withdraw
- * @notice Contract for withdrawing ERC20 tokens with owner-only access and reentrancy protection
- * @dev Inherits from OpenZeppelin's Ownable and ReentrancyGuard contracts
- */
-contract Withdraw is Ownable, ReentrancyGuard {
-    constructor() Ownable(msg.sender) {}
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
-    /**
-     * @notice Emitted when tokens are withdrawn from the contract
-     * @param to The address receiving the withdrawn tokens
-     * @param value The amount of tokens withdrawn
-     */
-    event Withdrawn(address indexed to, uint256 value);
+/// @dev Utility for owner to withdraw ERC20 or ETH
+abstract contract Withdraw is Ownable {
+    /// @notice Withdraw stuck ERC20 tokens
+    function withdrawToken(address token) external onlyOwner {
+        uint256 bal = IERC20(token).balanceOf(address(this));
+        require(bal > 0, "Zero balance");
+        IERC20(token).transfer(msg.sender, bal);
+    }
 
-    /**
-     * @notice Withdraws a specified amount of ERC20 tokens to a given address
-     * @dev Requires the caller to be the contract owner and prevents reentrancy
-     * @param token The ERC20 token to withdraw
-     * @param _to The recipient address of the withdrawn tokens
-     * @param _value The amount of tokens to withdraw
-     */
-    function withdrawToken(
-        IERC20 token,
-        address _to,
-        uint256 _value
-    ) external onlyOwner nonReentrant {
-        require(
-            token.balanceOf(address(this)) >= _value,
-            "Insufficient balance"
-        ); // Check
-        SafeERC20.safeTransfer(token, _to, _value); // Transfer
-        emit Withdrawn(_to, _value); // Emit the Withdrawn event
+    /// @notice Withdraw stuck ETH
+    function withdrawETH() external onlyOwner {
+        uint256 bal = address(this).balance;
+        require(bal > 0, "Zero balance");
+        payable(msg.sender).transfer(bal);
     }
 }

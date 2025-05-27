@@ -1,21 +1,26 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.8;
-import {IFlashloan} from "../interfaces/IFlashloan.sol";
 
-/// @dev Abstract contract providing validation for flashloan operations
-/// @notice Defines the maximum number of supported protocols for flashloan routing
+import {FlashParams} from "../interfaces/IFlashloan.sol";
+import {Route} from "../libraries/RouteUtils.sol";
+
+/// @dev Reuses modifiers to validate flashloan params and route weights
 abstract contract FlashloanValidation {
-    uint256 constant MAX_PROTOCOL = 8;
+    /// @notice Basic sanity checks on flashloan parameters
+    modifier checkParams(FlashParams calldata params) {
+        require(params.flashLoanPool != address(0), "Invalid pool");
+        require(params.loanAmount > 0, "Zero loan");
+        require(params.routes.length > 0, "No routes");
+        _;
+    }
 
-    /// @dev Validates that the total routes parts sum exactly to 10000 (100%)
-    /// @notice Ensures routes distribution is precisely allocated across protocols
-    /// @param routes An array of Route structs representing protocol distribution
-    modifier checkTotalRoutePart(IFlashloan.Route[] memory routes) {
-        uint16 totalPart = 0;
+    /// @notice Ensures that the sum of all route.part values equals 1e18 (100%)
+    modifier checkTotalRoutePart(Route[] calldata routes) {
+        uint256 sum;
         for (uint256 i = 0; i < routes.length; i++) {
-            totalPart += routes[i].part;
+            sum += routes[i].part;
         }
-        require(totalPart == 10000, "Total part must be 10000");
-        _; // Continue with the function execution
+        require(sum == 1e18, "Invalid total route weight");
+        _;
     }
 }

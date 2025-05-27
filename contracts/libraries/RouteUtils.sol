@@ -1,16 +1,22 @@
-// SPDX-License-Identifier: MIT
+// File: libraries/RouteUtils.sol
 pragma solidity ^0.8.8;
-import {IFlashloan} from "../interfaces/IFlashloan.sol";
-import "../interfaces/IFlashloan.sol";
+
+/// @dev Represents a single protocol hop in a route
+struct Hop {
+    uint8 protocol;
+    bytes data;
+    address[] path;
+}
+
+/// @dev A route is a weighted sequence of hops
+struct Route {
+    uint256 part;
+    Hop[] hops;
+}
 
 library RouteUtils {
-    /// @notice Retrieves the initial token from the first hop of a route
-    /// @dev Returns the first token in the first hop's path
-    /// @param route The route containing hops and paths
-    /// @return The address of the initial token in the route
-    function getInitialToken(
-        IFlashloan.Route memory route
-    ) internal pure returns (address) {
-        return route.hops[0].path[0];
+    /// @notice Returns the initial token of a route
+    function getInitialToken(Route storage r) internal view returns (address) {
+        return r.hops[0].path[0];
     }
 }

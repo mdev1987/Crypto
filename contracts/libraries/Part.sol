@@ -1,15 +1,14 @@
-// SPDX-License-Identifier: MIT
+// File: libraries/Part.sol
 pragma solidity ^0.8.8;
-import "@openzeppelin/contracts/utils/math/SignedMath.sol";
 
 library Part {
-    using SignedMath for uint256;
-    using SignedMath for uint16;
-
+    /// @notice Converts a route fraction into an absolute amount
+    /// @param part  Fraction in 1e18 units (e.g. 0.5e18 for 50%)
+    /// @param total Total amount to split
     function partToAmountIn(
-        uint16 part,
+        uint256 part,
         uint256 total
-    ) internal pure returns (uint256 amountIn) {
-        amountIn = (total * part) / 10 ** 4;
+    ) internal pure returns (uint256) {
+        return (total * part) / 1e18;
     }
 }
