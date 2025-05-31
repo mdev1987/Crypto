@@ -1,4 +1,4 @@
-// File: libraries/RouteUtils.sol
+// SPDX-License-Identifier: MIT
 pragma solidity ^0.8.8;
 
 /// @dev Represents a single protocol hop in a route
@@ -16,7 +16,7 @@ struct Route {
 
 library RouteUtils {
     /// @notice Returns the initial token of a route
-    function getInitialToken(Route storage r) internal view returns (address) {
+    function getInitialToken(Route memory r) internal pure returns (address) {
         return r.hops[0].path[0];
     }
 }

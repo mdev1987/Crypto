@@ -1,6 +1,6 @@
 import { JsonRpcProvider, ethers } from "ethers";
 import { HardhatEthersSigner } from "@nomicfoundation/hardhat-ethers/signers";
-import { ERC20 } from "../typechain-types";
+import { IERC20 } from "../typechain-types";
 
 export type FlashLoanParams = {
   flashLoanContractAddress: string;
@@ -44,7 +44,7 @@ export type IToken = {
 };
 
 export type FundingParams = {
-  tokenContract: ERC20;
+  tokenContract: IERC20;
   sender: string;
   recipient: string;
   amount: string;
@@ -62,3 +62,10 @@ export type PriceInUsdcParams = {
 export type erc20Token = { [erc20: string]: IToken };
 
 export type RouterMap = { [protocol: string]: string };
+
+export type getPriceParams = {
+  router: string;
+  factory: string;
+  tokenAddress: string;
+  id: number;
+};

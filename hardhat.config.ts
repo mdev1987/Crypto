@@ -7,18 +7,27 @@ const config: HardhatUserConfig = {
   },
   networks: {
     hardhat: {
-      chainId: 31337,
+      loggingEnabled: true,
       forking: {
         url: "https://rpc.ankr.com/polygon/a08dc0c8056dd0b5773c7bc41d752dcd0a03224d6424c0142c8e6a35b1c53c85",
+        blockNumber: 72055389, // optional; remove for latest
+      },
+      chains: {
+        137: {
+          hardforkHistory: {
+            london: 72055389,
+          },
+        },
       },
     },
     localhost: {
-      url: "http://localhost:8545",
-      //accounts: [""],
+      url: "http://127.0.0.1:8545/",
+      chainId: 137,
     },
     polygon: {
       url: "https://rpc.ankr.com/polygon/a08dc0c8056dd0b5773c7bc41d752dcd0a03224d6424c0142c8e6a35b1c53c85",
-      //accounts: ["YOUR_PRIVATE_KEY"],
+      chainId: 137,
+      // accounts: ["YOUR_PRIVATE_KEY"],
     },
   },
   typechain: {

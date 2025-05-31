@@ -7,11 +7,11 @@ const provider = new ethers.JsonRpcProvider(
   "https://rpc.ankr.com/eth/a08dc0c8056dd0b5773c7bc41d752dcd0a03224d6424c0142c8e6a35b1c53c85"
 );
 
-// const tokenIn = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"; // WETH on Polygon
-// const tokenOut = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"; // USDT on Polygon
+const tokenIn = "0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619"; // WETH on Polygon
+const tokenOut = "0xc2132D05D31c914a87C6611C10748AEb04B58e8F"; // USDT on Polygon
 
-const tokenIn = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH on Ethereum
-const tokenOut = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // USDT on Ethereum
+// const tokenIn = "0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2"; // WETH on Ethereum
+// const tokenOut = "0xdAC17F958D2ee523a2206206994597C13D831ec7"; // USDT on Ethereum
 const fee = 3000; // 0.3% fee tier
 const amountIn = ethers.parseEther("1");
 const sqrtPriceLimitX96 = ethers.toBigInt(0); // 0 USDT per WETH

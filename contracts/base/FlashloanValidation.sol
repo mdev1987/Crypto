@@ -15,7 +15,7 @@ abstract contract FlashloanValidation {
     }
 
     /// @notice Ensures that the sum of all route.part values equals 1e18 (100%)
-    modifier checkTotalRoutePart(Route[] calldata routes) {
+    modifier checkTotalRoutePart(Route[] memory routes) {
         uint256 sum;
         for (uint256 i = 0; i < routes.length; i++) {
             sum += routes[i].part;

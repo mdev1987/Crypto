@@ -2,10 +2,13 @@
 pragma solidity ^0.8.8;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 
 /// @dev Utility for owner to withdraw ERC20 or ETH
-abstract contract Withdraw is Ownable {
+abstract contract Withdraw is Ownable, ReentrancyGuard {
+    constructor() Ownable(msg.sender) {}
+
     /// @notice Withdraw stuck ERC20 tokens
     function withdrawToken(address token) external onlyOwner {
         uint256 bal = IERC20(token).balanceOf(address(this));

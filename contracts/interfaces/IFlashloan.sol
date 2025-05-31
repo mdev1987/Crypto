@@ -1,4 +1,4 @@
-// File: interfaces/IFlashloan.sol
+// SPDX-License-Identifier: MIT
 // Defines the flashloan parameters and interface for executeFlashLoan
 pragma solidity ^0.8.8;
 

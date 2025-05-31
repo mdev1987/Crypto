@@ -1,224 +1,146 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.8;
+pragma solidity ^0.8.20;
 
-import {IFlashloan, FlashParams} from "./interfaces/IFlashloan.sol";
-import {DodoBase} from "./base/DodoBase.sol";
-import {Withdraw} from "./base/Withdraw.sol";
-import {FlashloanValidation} from "./base/FlashloanValidation.sol";
+// OpenZeppelin v5+ imports
+import {IERC20, SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {ReentrancyGuard} from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
-import {SafeERC20, IERC20 as SafeIERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
-import {Math} from "@openzeppelin/contracts/utils/math/Math.sol";
-import {RouteUtils, Route, Hop} from "./libraries/RouteUtils.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
-import {IDODO} from "./interfaces/IDODO.sol";
-import {Part} from "./libraries/Part.sol";
-import {ISwapRouter} from "./uniswap/V3/ISwapRouter.sol";
-import {IUniswapV2Router} from "./uniswap/IUniswapV2Router.sol";
-import {IDODOProxy} from "./interfaces/IDODOProxy.sol";
 
-/**
- * @title FlashLoan Executor
- * @notice Executes multi-protocol flash loans via DODO pools with route-based swaps
- */
-contract FlashLoan is DodoBase, FlashloanValidation, Withdraw, ReentrancyGuard {
-    using SafeERC20 for SafeIERC20;
+// Interface for DODO FlashLoan pools
+interface IDODOFlashLoan {
+    function flashLoan(
+        uint256 baseAmount,
+        uint256 quoteAmount,
+        address assetTo,
+        bytes calldata data
+    ) external;
+}
 
-    /// @notice Emitted after all swaps are executed
-    event SwapsExecuted(address indexed token, uint256 balanceAfter);
-    /// @notice Emitted when the loan is repaid
-    event LoanRepaid(address indexed pool, uint256 amount);
-    /// @notice Emitted when profit is sent to the owner
-    event ProfitSent(address indexed recipient, uint256 amount);
-    /// @notice Emitted when tokens are approved
-    event Approval(
-        address indexed token,
-        address indexed spender,
-        uint256 amount
-    );
+// Minimal router interface for external swaps
+interface IRouter {
+    function swapExactTokensForTokens(
+        uint amountIn,
+        uint amountOutMin,
+        address[] calldata path,
+        address to,
+        uint deadline
+    ) external returns (uint[] memory amounts);
+}
 
-    constructor() Ownable() {}
+// Struct to describe a trading hop
+struct TradeHop {
+    uint8 protocol; // e.g. 1 = QuickSwap, 2 = SushiSwap, 3 = UniswapV3...
+    address router;
+    address[] path;
+}
 
-    uint256 private constant MAX_UINT = type(uint256).max;
-    uint256 private constant SLIPPAGE_NUM = 95;
-    uint256 private constant SLIPPAGE_DEN = 100;
-    uint256 private constant DEADLINE_DELAY = 60;
+// Main contract
+contract FlashLoan is ReentrancyGuard, Ownable {
+    using SafeERC20 for IERC20;
 
-    /// @inheritdoc IFlashloan
+    address public immutable WETH = 0x7ceB23fD6bC0adD59E62ac25578270cFf1b9f619;
+
+    constructor() Ownable(msg.sender) {}
+
+    // Entry point for initiating a flash loan
     function executeFlashLoan(
-        FlashParams calldata params
-    ) external onlyOwner nonReentrant checkParams(params) {
-        bytes memory data = abi.encode(params);
-
-        address loanToken = RouteUtils.getInitialToken(params.routes[0]);
-        address baseToken = IDODO(params.flashLoanPool)._BASE_TOKEN_();
-        uint256 baseAmt = (baseToken == loanToken) ? params.loanAmount : 0;
-        uint256 quoteAmt = (baseToken == loanToken) ? 0 : params.loanAmount;
-
-        IDODO(params.flashLoanPool).flashLoan(
-            baseAmt,
-            quoteAmt,
+        address pool,
+        address loanToken,
+        uint256 loanAmount,
+        TradeHop[] calldata hops
+    ) external onlyOwner nonReentrant {
+        bytes memory data = abi.encode(loanToken, loanAmount, hops, msg.sender);
+        IDODOFlashLoan(pool).flashLoan(
+            loanToken == WETH ? loanAmount : 0,
+            loanToken != WETH ? loanAmount : 0,
             address(this),
             data
         );
     }
 
-    /// @inheritdoc DodoBase
-    function _flashLoanCallBack(
-        address,
-        uint256,
-        uint256,
+    // Callback for DODO to invoke after loan is issued
+    function DVMFlashLoanCall(
+        address /* sender */,
+        uint256 baseAmount,
+        uint256 quoteAmount,
         bytes calldata data
-    ) internal override {
-        FlashParams memory cfg = abi.decode(data, (FlashParams));
-        address pool = cfg.flashLoanPool;
-        address loanToken = RouteUtils.getInitialToken(cfg.routes[0]);
-        uint256 owed = cfg.loanAmount;
+    ) external {
+        _handleFlashLoanCallback(baseAmount, quoteAmount, data);
+    }
 
-        if (msg.sender != pool) revert Unauthorized();
-        if (IERC20(loanToken).balanceOf(address(this)) < owed)
-            revert InsufficientBalance();
+    function DPPFlashLoanCall(
+        address /* sender */,
+        uint256 baseAmount,
+        uint256 quoteAmount,
+        bytes calldata data
+    ) external nonReentrant {
+        _handleFlashLoanCallback(baseAmount, quoteAmount, data);
+    }
 
-        _executeRoutes(cfg.routes, owed);
-        emit SwapsExecuted(
-            loanToken,
-            IERC20(loanToken).balanceOf(address(this))
+    function DSPFlashLoanCall(
+        address /* sender */,
+        uint256 baseAmount,
+        uint256 quoteAmount,
+        bytes calldata data
+    ) external nonReentrant {
+        _handleFlashLoanCallback(baseAmount, quoteAmount, data);
+    }
+
+    // Internal logic for executing trades and repaying loan
+    function _handleFlashLoanCallback(
+        uint256 baseAmount,
+        uint256 quoteAmount,
+        bytes memory data
+    ) internal {
+        (
+            address loanToken,
+            uint256 loanAmount,
+            TradeHop[] memory hops,
+            address initiator
+        ) = abi.decode(data, (address, uint256, TradeHop[], address));
+
+        require(
+            loanAmount == baseAmount || loanAmount == quoteAmount,
+            "Invalid flash loan amount"
         );
 
-        SafeIERC20(loanToken).safeTransfer(pool, owed);
-        emit LoanRepaid(pool, owed);
+        IERC20(loanToken).safeIncreaseAllowance(hops[0].router, loanAmount);
 
-        uint256 profit = IERC20(loanToken).balanceOf(address(this));
-        if (profit > 0) {
-            SafeIERC20(loanToken).safeTransfer(owner(), profit);
-            emit ProfitSent(owner(), profit);
-        }
-    }
+        uint256 amountOut;
+        for (uint256 i = 0; i < hops.length; i++) {
+            TradeHop memory hop = hops[i];
 
-    /// @dev Approve spender for maximum allowance
-    function _approveMax(address token, address spender) internal onlyOwner {
-        SafeIERC20(token).safeApprove(spender, MAX_UINT);
-        emit Approval(token, spender, MAX_UINT);
-    }
+            uint256 inputAmount = i == 0 ? loanAmount : amountOut;
+            IERC20(hop.path[0]).safeIncreaseAllowance(hop.router, inputAmount);
 
-    /// @dev Loop through all routes; ensure weights sum to 1e18
-    function _executeRoutes(
-        Route[] memory routes,
-        uint256 total
-    ) internal checkTotalRoutePart(routes) {
-        uint256 len = routes.length;
-        for (uint256 i = 0; i < len; ) {
-            uint256 slice = Part.partToAmountIn(routes[i].part, total);
-            _executeHops(routes[i], slice);
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    /// @dev Execute hops within a single route
-    function _executeHops(Route memory route, uint256 amountIn) internal {
-        uint256 hopsLen = route.hops.length;
-        uint256 amt = amountIn;
-        for (uint256 i = 0; i < hopsLen; ) {
-            amt = _dispatchSwap(route.hops[i], amt);
-            unchecked {
-                ++i;
-            }
-        }
-    }
-
-    /// @dev Dispatch swap to the correct protocol
-    function _dispatchSwap(
-        Hop memory hop,
-        uint256 amountIn
-    ) internal returns (uint256) {
-        if (hop.protocol == 0) {
-            return _swapV3(hop.data, amountIn, hop.path);
-        } else if (hop.protocol < 8) {
-            return _swapV2(hop.data, amountIn, hop.path);
-        } else {
-            return _swapDodoV2(hop.data, amountIn, hop.path);
-        }
-    }
-
-    /// @dev Uniswap V3 single-hop exactInputSingle
-    function _swapV3(
-        bytes memory data,
-        uint256 amountIn,
-        address[] memory path
-    ) internal returns (uint256 amountOut) {
-        (address router, uint24 fee) = abi.decode(data, (address, uint24));
-        ISwapRouter(router).exactInputSingle(
-            ISwapRouter.ExactInputSingleParams(
-                path[0],
-                path[1],
-                fee,
+            amountOut = IRouter(hop.router).swapExactTokensForTokens(
+                inputAmount,
+                0, // minOut
+                hop.path,
                 address(this),
-                block.timestamp + DEADLINE_DELAY,
-                amountIn,
-                0,
-                0
-            )
-        );
-        _approveMax(path[0], router);
+                block.timestamp
+            )[hop.path.length - 1];
+        }
+
+        // Repay flash loan
+        IERC20(loanToken).safeTransfer(msg.sender, loanAmount);
+
+        // Profit sent to initiator
+        uint256 finalBalance = IERC20(
+            hops[hops.length - 1].path[hops[hops.length - 1].path.length - 1]
+        ).balanceOf(address(this));
+        if (finalBalance > 0) {
+            IERC20(
+                hops[hops.length - 1].path[
+                    hops[hops.length - 1].path.length - 1
+                ]
+            ).safeTransfer(initiator, finalBalance);
+        }
     }
 
-    /// @dev Uniswap V2 forked swap
-    function _swapV2(
-        bytes memory data,
-        uint256 amountIn,
-        address[] memory path
-    ) internal returns (uint256 amountOut) {
-        address router = abi.decode(data, (address));
-        _approveMax(path[0], router);
-        uint256 minOut = Math.mulDiv(amountIn, SLIPPAGE_NUM, SLIPPAGE_DEN);
-        uint256[] memory outs = IUniswapV2Router(router)
-            .swapExactTokensForTokens(
-                amountIn,
-                minOut,
-                path,
-                address(this),
-                block.timestamp + DEADLINE_DELAY
-            );
-        amountOut = outs[outs.length - 1];
+    // Emergency withdrawal
+    function rescueTokens(address token, address to) external onlyOwner {
+        uint256 balance = IERC20(token).balanceOf(address(this));
+        IERC20(token).safeTransfer(to, balance);
     }
-
-    /// @dev DODO V2 token-to-token swap via proxy
-    function _swapDodoV2(
-        bytes memory data,
-        uint256 amountIn,
-        address[] memory path
-    ) internal returns (uint256 amountOut) {
-        // decode the pool address and proxy
-        (address pool, , address proxy) = abi.decode(
-            data,
-            (address, address, address)
-        );
-
-        // approve the proxy
-        _approveMax(path[0], proxy);
-
-        // fixed-size memory array literal
-        address[1] memory pools = [pool];
-
-        // direction: 0 = base→quote, 1 = quote→base
-        uint256 direction = IDODO(pool)._BASE_TOKEN_() == path[0] ? 0 : 1;
-
-        // execute the swap
-        amountOut = IDODOProxy(proxy).dodoSwapV2TokenToToken(
-            path[0],
-            path[1],
-            amountIn,
-            1,
-            pools, // pass in the [pool] array
-            direction,
-            false,
-            block.timestamp + DEADLINE_DELAY
-        );
-    }
-
-    // Custom errors for gas savings
-    error Unauthorized();
-    error InsufficientBalance();
 }

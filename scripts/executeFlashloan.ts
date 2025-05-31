@@ -1,42 +1,53 @@
-import { ethers } from "ethers";
-import flashloanJson from "../artifacts/contracts/FlashLoan.sol/FlashLoan.json";
-import { FlashLoanParams } from "../types";
+import { ethers } from "hardhat";
+import type { BigNumberish, Signer } from "ethers";
+import { FlashLoan } from "../typechain-types"; // adjust import as per your project structure
 
-/**
- * Executes a flash loan transaction using the specified parameters.
- *
- * @param params - An object containing the parameters required to execute the flash loan.
- * @param params.flashLoanContractAddress - The address of the flash loan contract.
- * @param params.signer - The signer object used to sign the transaction.
- * @param params.flashLoanPool - The address of the flash loan pool.
- * @param params.loanAmount - The amount to borrow in the flash loan.
- * @param params.routes - The routes for the flash loan transaction.
- * @param params.gasLimit - The gas limit for the transaction.
- * @param params.gasPrice - The gas price for the transaction.
- *
- * @returns A promise that resolves to the transaction object of the executed flash loan.
- */
-export async function executeFlashLoan(params: FlashLoanParams) {
-  const flashLoan = new ethers.Contract(
-    params.flashLoanContractAddress,
-    flashloanJson.abi,
-    params.signer
-  );
+export interface TradeHop {
+  protocol: number;
+  router: string;
+  path: string[];
+}
+
+export interface ExecuteFlashLoanParams {
+  flashLoanContractAddress: string;
+  flashLoanPool: string;
+  loanToken: string;
+  loanAmount: BigNumberish;
+  hops: TradeHop[];
+  gasLimit?: number;
+  gasPrice?: BigNumberish;
+  signer: Signer;
+}
+
+export async function executeFlashLoan(params: ExecuteFlashLoanParams) {
+  const {
+    flashLoanContractAddress,
+    flashLoanPool,
+    loanToken,
+    loanAmount,
+    hops,
+    gasLimit = 3_000_000,
+    gasPrice,
+    signer,
+  } = params;
+
+  const flashLoan = (await ethers.getContractAt(
+    "FlashLoan",
+    flashLoanContractAddress,
+    signer
+  )) as FlashLoan;
+
   const tx = await flashLoan.executeFlashLoan(
+    flashLoanPool,
+    loanToken,
+    loanAmount,
+    hops,
     {
-      flashLoanPool: params.flashLoanPool,
-      loanAmount: params.loanAmount,
-      routes: [
-        {
-          hops: params.hops,
-          part: 10000,
-        },
-      ],
-    },
-    {
-      gasLimit: params.gasLimit,
-      gasPrice: params.gasPrice,
+      gasLimit,
+      gasPrice,
     }
   );
-  return tx;
+
+  const receipt = await tx.wait();
+  return receipt;
 }

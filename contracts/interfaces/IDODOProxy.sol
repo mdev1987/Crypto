@@ -1,4 +1,4 @@
-// File: interfaces/IDODOProxy.sol
+// SPDX-License-Identifier: MIT
 // Proxy interface to perform DODO V2 token-to-token swaps
 pragma solidity ^0.8.8;
 
@@ -11,6 +11,6 @@ interface IDODOProxy {
         address[] calldata pools,
         uint256 directions,
         bool isIncentive,
-        uint64 deadLine
+        uint256 deadLine
     ) external returns (uint256);
 }

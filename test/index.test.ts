@@ -1,110 +1,76 @@
 import { ethers } from "hardhat";
+import { expect } from "chai";
 import { deployDodoFlashloan } from "../scripts/deployDodoFlashloan";
-import { dodoV2Pool, Protocols } from "../constants";
-import { findRouterByProtocol } from "../utils/findRouterByProtocol";
-import { FlashLoanParams } from "../types";
-import { ERC20Token } from "../constants/tokens";
 import { executeFlashLoan } from "../scripts/executeFlashloan";
 import { impersonateFundERC20 } from "../utils/funding";
-import { ERC20, ERC20__factory } from "../typechain-types";
-import { expect } from "chai";
+import {
+  DodoV2Pools,
+  Protocols,
+  QUOTER_ADDRESS,
+  QUOTER_ADDRESS2,
+  Routers,
+} from "../constants";
+import { ERC20Token } from "../constants/tokens";
 
-describe("DODO FlashLoan", () => {
-  it("Execute flash loan", async () => {
-    const provider = ethers.provider;
-    const [wallet] = await ethers.getSigners();
-    const flashLoan = await deployDodoFlashloan({ wallet });
+describe("FlashLoan Contract", () => {
+  it("should execute a profitable flash loan", async () => {
+    const [deployer] = await ethers.getSigners();
 
-    const tokenContract = ERC20__factory.connect(
-      ERC20Token.WETH.address,
-      provider
-    );
+    const flashLoan = await deployDodoFlashloan({ wallet: deployer });
+    const contractAddress = await flashLoan.getAddress();
 
-    const mrWhale = "0xdeD8C5159CA3673f543D0F72043E4c655b35b96A";
-    const flashLoanAddress = await flashLoan.getAddress();
+    const WETH = await ethers.getContractAt("IERC20", ERC20Token.WETH.address);
+    const whale = "0xdeD8C5159CA3673f543D0F72043E4c655b35b96A";
 
-    // === BEFORE FUNDING - Check initial balances ===
-    console.log("=== BEFORE FUNDING ===");
-    const initialBalance = await tokenContract.balanceOf(flashLoanAddress);
-    const whaleInitialBalance = await tokenContract.balanceOf(mrWhale);
-    console.log(
-      "FlashLoan initial balance:\t",
-      ethers.formatEther(initialBalance)
-    );
-    console.log(
-      "Whale initial balance:\t\t",
-      ethers.formatEther(whaleInitialBalance)
-    );
-
-    // Execute funding transaction
-    const fundingTxResponse = await impersonateFundERC20({
-      sender: mrWhale,
-      tokenContract: tokenContract,
-      recipient: flashLoanAddress,
+    console.log("Funding contract with 1 WETH...");
+    const txFund = await impersonateFundERC20({
+      sender: whale,
+      tokenContract: WETH,
+      recipient: contractAddress,
       decimals: 18,
       amount: "1",
     });
+    await txFund.wait();
 
-    const receipt = await fundingTxResponse.wait();
-    console.log("=== TRANSACTION RECEIPT ===");
-    console.log("Transaction Hash:\t\t", receipt?.hash);
-    console.log("Gas used:\t\t", receipt?.gasUsed.toString());
-    console.log(
-      "Status:\t\t\t",
-      receipt?.status === 1 ? "SUCCESS ✅" : "FAILED ❌"
-    );
+    const preBalance = await WETH.balanceOf(contractAddress);
+    expect(preBalance).to.equal(ethers.parseEther("1"));
 
-    const tokenBalance = await tokenContract.balanceOf(flashLoanAddress);
-    console.log(
-      "FlashLoan Balance Before Swaping\t",
-      ethers.formatEther(tokenBalance),
-      " WETH"
-    );
-    expect(tokenBalance).to.equal(ethers.parseEther("1"));
+    const hops = [
+      {
+        protocol: Protocols.QUICKSWAP,
+        router: Routers.POLYGON_QUICKSWAP, // QuickSwap router
+        path: [ERC20Token.WETH.address, ERC20Token.USDC.address],
+      },
+      {
+        protocol: Protocols.SUSHISWAP,
+        router: Routers.POLYGON_SUSHISWAP, // SushiSwap router
+        path: [ERC20Token.USDC.address, ERC20Token.WETH.address],
+      },
+    ];
 
-    const params: FlashLoanParams = {
-      flashLoanContractAddress: flashLoanAddress,
-      flashLoanPool: dodoV2Pool.WETH_ULT,
+    const receipt = await executeFlashLoan({
+      flashLoanContractAddress: contractAddress,
+      flashLoanPool: DodoV2Pools.WETH_USDC,
+      loanToken: ERC20Token.WETH.address,
       loanAmount: ethers.parseEther("0.01"),
-      hops: [
-        {
-          protocol: Protocols.QUICKSWAP,
-          data: ethers.AbiCoder.defaultAbiCoder().encode(
-            ["address"],
-            [findRouterByProtocol(Protocols.QUICKSWAP)]
-          ),
-          path: [ERC20Token.WETH?.address, ERC20Token.USDC?.address],
-          amountOutMinV3: 0,
-          sqrtPriceLimitX96: 0,
-        },
-        {
-          protocol: Protocols.SUSHISWAP,
-          data: ethers.AbiCoder.defaultAbiCoder().encode(
-            ["address"],
-            [findRouterByProtocol(Protocols.SUSHISWAP)]
-          ),
-          path: [ERC20Token.USDC?.address, ERC20Token.WETH?.address],
-          amountOutMinV3: 0,
-          sqrtPriceLimitX96: 0,
-        },
-      ],
+      hops,
       gasLimit: 3_000_000,
-      gasPrice: ethers.parseUnits("300", "gwei"),
-      signer: wallet,
-    };
+      gasPrice: ethers.parseUnits("200", "gwei"),
+      signer: deployer,
+    });
 
-    const tx = await executeFlashLoan(params);
-    const tokenBalanceFinal = await tokenContract.balanceOf(flashLoanAddress);
+    expect(receipt).to.exist;
+
+    const postContractBalance = await WETH.balanceOf(contractAddress);
+    const deployerBalance = await WETH.balanceOf(deployer.address);
+
     console.log(
-      "Final FlashLoan Balance:\t",
-      ethers.formatEther(tokenBalanceFinal),
-      " WETH"
+      "Contract WETH Balance After:",
+      ethers.formatEther(postContractBalance)
     );
-    expect(tokenBalanceFinal).to.equal(ethers.parseEther("0"));
-    expect(tx).to.exist;
-    //expect(tx).to.not.be.null;
-    const ownerBalance = await tokenContract.balanceOf(wallet.address);
-    console.log("🚀 ~ it ~ ownerBalance:", ownerBalance);
-    expect(ownerBalance).to.be.gt(ethers.parseEther("0"));
+    console.log("Deployer WETH Profit:", ethers.formatEther(deployerBalance));
+
+    expect(postContractBalance).to.equal(0);
+    expect(deployerBalance).to.be.gt(0);
   });
 });

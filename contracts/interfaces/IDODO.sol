@@ -1,4 +1,4 @@
-// File: interfaces/IDODO.sol
+// SPDX-License-Identifier: MIT
 // Minimal DODO V2 pool interface for flashLoan and token info
 pragma solidity ^0.8.8;
 
